@@ -3,6 +3,7 @@ import pandas as pd
 import tensorflow as tf
 
 import os
+import pickle
 
 import matplotlib.pyplot as plt
 
@@ -13,24 +14,26 @@ def predict(model, test_input):
 
     return (prediction_p > 0.5).astype('int')
     
-def preprocess_data(df, normalize=True):
-    #preprocessing
-
+def load_data(path):
+    df = pd.read_csv(path)
     cols = df.columns
-
-    # convert "male" to 1 and "female" to 0
-    df['label_num'] = (df['label'] == "male").astype('int')
-
-    #exclude 'label' column
-    att_cols = cols[:-1]
+    att_cols = cols[:-1]    # exclude 'label' column
 
     mean = df[att_cols].mean()
     std = df[att_cols].std()  
 
+    return df, att_cols, mean, std
+
+def preprocess_data(df, normalize=True, att_cols= None, mean= None, std= None):
+    #preprocessing
+
+    # convert "male" to 1 and "female" to 0
+    df['label_num'] = (df['label'] == "male").astype('int')
+
     if normalize:
         df[att_cols]=(df[att_cols]-mean)/std      
     
-    return df, att_cols, mean, std
+    return df
 
 def split_data(df, att_cols, train_ratio=0.7):
 
@@ -39,7 +42,7 @@ def split_data(df, att_cols, train_ratio=0.7):
     df_len = len(df) # 3168 = 1584 male and 1584 female
     
     #try train_test_split function from sklearn?
-
+    df = df.sample(frac=1).reset_index(drop=True)
     training_input = df.loc[:int(df_len*train_ratio), att_cols]
     training_label = df.loc[:int(df_len*train_ratio), 'label_num']
     testing_input = df.loc[int(df_len*train_ratio)+1:, att_cols]
@@ -89,12 +92,16 @@ def load_model(checkpoint_path):
     new_model = tf.keras.models.model_from_json(json_config)
     new_model.load_weights(os.path.join(checkpoint_path,'model_weights.h5'))
 
+    # Getting back other objects:
+    with open(os.path.join(checkpoint_path, 'objs.pkl'), 'rb') as f:
+        att_cols, mean, std = pickle.load(f)
+
     print("Model loaded from path: %s" % checkpoint_path)
-    return new_model
+    return new_model, att_cols, mean, std
 
 def train():
-    df= pd.read_csv("../data/voice.csv")
-    df, att_cols = preprocess_data(df)
+    df, att_cols, mean, std= load_data("../data/voice.csv")
+    df = preprocess_data(df, normalize = True, att_cols = att_cols, mean=mean, std=std)
     training_input, training_label, testing_input, testing_label = split_data(df, att_cols)
 
     print("Number of male training data: ", sum(training_label == 1))
@@ -102,5 +109,10 @@ def train():
 
     model = model_fit(training_input, training_label, testing_input, testing_label, att_cols, plot_acc=True, verbose=2)
 
+    # Saving the model
     checkpoint_path = "../saved_model"
     save_model(model, checkpoint_path)
+
+    # Saving other objects:
+    with open(os.path.join(checkpoint_path, 'objs.pkl'), 'wb') as f:
+        pickle.dump([att_cols, mean, std], f)
